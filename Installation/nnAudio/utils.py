@@ -1,6 +1,7 @@
 """
 Module containing helper functions such as overlap sum and Fourier kernels generators
 """
+
 import sys
 
 import torch
@@ -39,14 +40,13 @@ def rfft_fn(x, n=None, onesided=False):
     else:
         return torch.rfft(x, n, onesided=onesided)
 
+
 ## --------------------------- Filter Design ---------------------------##
 def torch_window_sumsquare(w, n_frames, stride, n_fft, power=2):
     w_stacks = w.unsqueeze(-1).repeat((1, n_frames)).unsqueeze(0)
     # Window length + stride*(frames-1)
     output_len = w_stacks.shape[1] + stride * (w_stacks.shape[2] - 1)
-    return fold(
-        w_stacks ** power, (1, output_len), kernel_size=(1, n_fft), stride=stride
-    )
+    return fold(w_stacks**power, (1, output_len), kernel_size=(1, n_fft), stride=stride)
 
 
 def overlap_add(X, stride):
@@ -62,7 +62,8 @@ def uniform_distribution(r1, r2, *size, device):
 
 def extend_fbins(X):
     """Extending the number of frequency bins from `n_fft//2+1` back to `n_fft` by
-    reversing all bins except DC and Nyquist and append it on top of existing spectrogram"""
+    reversing all bins except DC and Nyquist and append it on top of existing spectrogram
+    """
     X_upper = X[:, 1:-1].flip(1)
     X_upper[:, :, :, 1] = -X_upper[
         :, :, :, 1
@@ -367,13 +368,13 @@ def create_fourier_kernels(
 
         for k in range(freq_bins):  # Only half of the bins contain useful info
             # print("log freq = {}".format(np.exp(k*scaling_ind)*start_bin*sr/n_fft))
-            bins2freq.append(2**(k * scaling_ind) * start_bin * sr / n_fft)
-            binslist.append((2**(k * scaling_ind) * start_bin))
+            bins2freq.append(2 ** (k * scaling_ind) * start_bin * sr / n_fft)
+            binslist.append((2 ** (k * scaling_ind) * start_bin))
             wsin[k, 0, :] = np.sin(
-                2 * np.pi * (2**(k * scaling_ind) * start_bin) * s / n_fft
+                2 * np.pi * (2 ** (k * scaling_ind) * start_bin) * s / n_fft
             )
             wcos[k, 0, :] = np.cos(
-                2 * np.pi * (2**(k * scaling_ind) * start_bin) * s / n_fft
+                2 * np.pi * (2 ** (k * scaling_ind) * start_bin) * s / n_fft
             )
 
     elif freq_scale == "no":
@@ -407,7 +408,7 @@ def create_cqt_kernels(
     fmax=None,
     topbin_check=True,
     gamma=0,
-    pad_fft=True
+    pad_fft=True,
 ):
     """
     Automatically create CQT kernels in time domain
@@ -442,7 +443,7 @@ def create_cqt_kernels(
 
     alpha = 2.0 ** (1.0 / bins_per_octave) - 1.0
     lengths = np.ceil(Q * fs / (freqs + gamma / alpha))
-    
+
     # get max window length depending on gamma value
     max_len = int(max(lengths))
     fftLen = int(2 ** (np.ceil(np.log2(max_len))))
@@ -461,7 +462,11 @@ def create_cqt_kernels(
             start = int(np.ceil(fftLen / 2.0 - l / 2.0))
 
         window_dispatch = get_window_dispatch(window, int(l), fftbins=True)
-        sig = window_dispatch * np.exp(np.r_[-l // 2 : l // 2] * 1j * 2 * np.pi * freq / fs) / l
+        sig = (
+            window_dispatch
+            * np.exp(np.r_[-l // 2 : l // 2] * 1j * 2 * np.pi * freq / fs)
+            / l
+        )
 
         if norm:  # Normalizing the filter # Trying to normalize like librosa
             tempKernel[k, start : start + int(l)] = sig / np.linalg.norm(sig, norm)
@@ -471,6 +476,120 @@ def create_cqt_kernels(
 
     # return specKernel[:,:fftLen//2+1], fftLen, torch.tensor(lenghts).float()
     return tempKernel, fftLen, torch.tensor(lengths).float(), freqs
+
+
+def create_causal_cqt_kernels(
+    Q,
+    fs,
+    fmin,
+    n_bins=84,
+    bins_per_octave=12,
+    norm=1,
+    window="hann",
+    fmax=None,
+    topbin_check=True,
+    gamma=0,
+    pad_fft=True,
+    skewed_hann=False,
+):
+    """
+    Automatically create CQT kernels in time domain
+    """
+
+    fftLen = 2 ** nextpow2(np.ceil(Q * fs / fmin))
+    # minWin = 2**nextpow2(np.ceil(Q * fs / fmax))
+
+    if (fmax != None) and (n_bins == None):
+        n_bins = np.ceil(
+            bins_per_octave * np.log2(fmax / fmin)
+        )  # Calculate the number of bins
+        freqs = fmin * 2.0 ** (np.r_[0:n_bins] / np.double(bins_per_octave))
+
+    elif (fmax == None) and (n_bins != None):
+        freqs = fmin * 2.0 ** (np.r_[0:n_bins] / np.double(bins_per_octave))
+
+    else:
+        warnings.warn("If fmax is given, n_bins will be ignored", SyntaxWarning)
+        n_bins = np.ceil(
+            bins_per_octave * np.log2(fmax / fmin)
+        )  # Calculate the number of bins
+        freqs = fmin * 2.0 ** (np.r_[0:n_bins] / np.double(bins_per_octave))
+
+    if np.max(freqs) > fs / 2 and topbin_check == True:
+        raise ValueError(
+            "The top bin {}Hz has exceeded the Nyquist frequency, \
+                          please reduce the n_bins".format(
+                np.max(freqs)
+            )
+        )
+
+    alpha = 2.0 ** (1.0 / bins_per_octave) - 1.0
+    lengths = np.ceil(Q * fs / (freqs + gamma / alpha))
+
+    # get max window length depending on gamma value
+    max_len = int(max(lengths))
+    fftLen = int(2 ** (np.ceil(np.log2(max_len))))
+
+    tempKernel = np.zeros((int(n_bins), int(fftLen)), dtype=np.complex64)
+    specKernel = np.zeros((int(n_bins), int(fftLen)), dtype=np.complex64)
+
+    for k in range(0, int(n_bins)):
+        freq = freqs[k]
+        l = lengths[k]
+
+        # Centering the kernels
+        # if l % 2 == 1:  # pad more zeros on RHS
+        #     start = int(np.ceil(fftLen / 2.0 - l / 2.0)) - 1
+        # else:
+        #     start = int(np.ceil(fftLen / 2.0 - l / 2.0))
+
+        # Put the kernel at the end of the buffer
+        start = int(fftLen - l)
+
+        if skewed_hann:
+            hann_window = get_skewed_hann(l, lookahead=lengths[-1])
+        else:
+            hann_window = get_window_dispatch(window, int(l), fftbins=True)
+        sig = (
+            hann_window
+            * np.exp(np.r_[-l // 2 : l // 2] * 1j * 2 * np.pi * freq / fs)
+            / l
+        )
+
+        if norm:  # Normalizing the filter # Trying to normalize like librosa
+            tempKernel[k, start:] = sig / np.linalg.norm(sig, norm)
+        else:
+            tempKernel[k, start:] = sig
+        # specKernel[k, :] = fft(tempKernel[k])
+
+    # return specKernel[:,:fftLen//2+1], fftLen, torch.tensor(lenghts).float()
+    return tempKernel, fftLen, torch.tensor(lengths).float(), freqs
+
+
+def get_skewed_hann(N, lookahead):
+    """
+    N: length of the window
+    lookahead: length of the lookahead samples.
+    """
+
+    def hann(n, l):
+        if n >= 0 and n < l:
+            return np.sin(np.pi * n / (l - 1)) ** 2
+        else:
+            return 0
+
+    def skew(n, lookahead, N):
+        if n < N - lookahead:
+            n_skewed = n * (N / 2) / (N - lookahead)
+        else:
+            n_skewed = (N / 2) + (N / 2) * (n - (N - lookahead)) / lookahead
+        return n_skewed
+
+    n_list = np.arange(N)
+    skewed_n_list = np.array(list(map(lambda n: skew(n, lookahead, N), n_list)))
+    skewed_hann = np.array(list(map(lambda n: hann(n, N), skewed_n_list)))
+
+    return skewed_hann
 
 
 def get_window_dispatch(window, N, fftbins=True):
