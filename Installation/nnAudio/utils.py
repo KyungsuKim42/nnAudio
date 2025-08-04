@@ -547,7 +547,7 @@ def create_causal_cqt_kernels(
         start = int(fftLen - l)
 
         if skewed_hann:
-            hann_window = get_skewed_hann(l, lookahead=lengths[-1])
+            hann_window = get_skewed_hann(l, lookahead=lengths[-1] // 2)
         else:
             hann_window = get_window_dispatch(window, int(l), fftbins=True)
         sig = (
@@ -571,23 +571,26 @@ def get_skewed_hann(N, lookahead):
     N: length of the window
     lookahead: length of the lookahead samples.
     """
-
-    def hann(n, l):
-        if n >= 0 and n < l:
-            return np.sin(np.pi * n / (l - 1)) ** 2
-        else:
-            return 0
-
-    def skew(n, lookahead, N):
-        if n < N - lookahead:
-            n_skewed = n * (N / 2) / (N - lookahead)
-        else:
-            n_skewed = (N / 2) + (N / 2) * (n - (N - lookahead)) / lookahead
-        return n_skewed
-
+    # NumPy 벡터화 버전으로 최적화
     n_list = np.arange(N)
-    skewed_n_list = np.array(list(map(lambda n: skew(n, lookahead, N), n_list)))
-    skewed_hann = np.array(list(map(lambda n: hann(n, N), skewed_n_list)))
+
+    # skew 함수를 벡터화
+    # if n < N - lookahead: n_skewed = n * (N / 2) / (N - lookahead)
+    # else: n_skewed = (N / 2) + (N / 2) * (n - (N - lookahead)) / lookahead
+    mask = n_list < (N - lookahead)
+    skewed_n_list = np.where(
+        mask,
+        n_list * (N / 2) / (N - lookahead),  # 첫 번째 조건
+        (N / 2) + (N / 2) * (n_list - (N - lookahead)) / lookahead,  # 두 번째 조건
+    )
+
+    # hann 함수를 벡터화
+    # if n >= 0 and n < l: return sin^2(pi * n / (l-1))
+    # else: return 0
+    valid_mask = (skewed_n_list >= 0) & (skewed_n_list < N)
+    skewed_hann = np.where(
+        valid_mask, np.sin(np.pi * skewed_n_list / (N - 1)) ** 2, 0.0
+    )
 
     return skewed_hann
 
