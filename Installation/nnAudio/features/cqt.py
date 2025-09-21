@@ -1309,7 +1309,7 @@ class CausalCQT(nn.Module):
                 "CQT kernels created, time used = {:.4f} seconds".format(time() - start)
             )
 
-    def forward(self, x, output_format=None, normalization_type="librosa"):
+    def forward(self, x, output_format=None, normalization_type="librosa", padless=False):
         """
         Convert a batch of waveforms to CQT spectrograms.
 
@@ -1338,8 +1338,9 @@ class CausalCQT(nn.Module):
 
         x = broadcast_dim(x)
 
-        padding = (self.kernel_width - self.buffer_size, self.buffer_size)
-        x = F.pad(x, padding, mode="constant", value=0)
+        if not padless:
+            padding = (self.kernel_width - self.buffer_size, self.buffer_size)
+            x = F.pad(x, padding, mode="constant", value=0)
 
         # CQT
         CQT_real = conv1d(x, self.cqt_kernels_real, stride=self.hop_length)
